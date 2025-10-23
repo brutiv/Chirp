@@ -1,0 +1,4 @@
+discord-py-interactions
+aiocache[redis]
+python-dotenv
+motor
