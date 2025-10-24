@@ -1,6 +1,6 @@
 import random, string
 from datetime import datetime, timezone
-from interactions import Extension, TimestampStyles, slash_command, slash_option, OptionType, User, Role, Timestamp
+from interactions import Extension, slash_command, slash_option, OptionType, User, Role, Timestamp
 
 class Promotions(Extension):
 
