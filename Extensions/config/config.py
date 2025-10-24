@@ -9,6 +9,8 @@ class Config(Extension):
         await ctx.defer(ephemeral=True)
 
         select_menu = StringSelectMenu(
+            StringSelectOption(label="Promotion Issuer Role", description="Role assigned to members who can promote others", value="promotion_issuer_role"),
+            StringSelectOption(label="Infraction Issuer Role", description="Role assigned to members who can issue infractions", value="infraction_issuer_role"),
             StringSelectOption(label="Promotion Log Channel", description="Channel to send promotions in", value="promotion_log"),
             StringSelectOption(label="Promotion Audit Log Channel", description="The channel to send promotion logs to", value="promotion_audit_log"),
             StringSelectOption(label="Infraction Log Channel", description="The channel to send infractions to", value="infraction_log"),
@@ -67,6 +69,80 @@ class Config(Extension):
                 min_values=1,
                 max_values=1,
             )
+
+            role_options = [
+                StringSelectOption(label=role.name, value=str(role.id))
+                for role in ctx.guild.roles
+            ]
+
+            if len(role_options) > 25:
+                role_options = role_options[:25]
+
+            if not role_options:
+                await ctx.edit(
+                    embed={
+                        "title": "No Roles Available",
+                        "description": "No roles were found in this guild.",
+                        "thumbnail": {"url": ctx.guild.icon.url},
+                    },
+                    components=[],
+                )
+                return
+            
+            if "role" in selected_setting_key:
+                role_selector_menu = StringSelectMenu(
+                    *role_options,
+                    custom_id="role_selector_menu",
+                    placeholder=f"Select a role for {selected_setting_key.replace('_', ' ').title()}",
+                    min_values=1,
+                    max_values=1,
+                )
+
+                await ctx.edit(
+                    embed={
+                        "title": f"Select Role for {selected_setting_key.replace('_', ' ').title()}",
+                        "description": "Choose a role from the menu below.",
+                        "thumbnail": {"url": ctx.guild.icon.url},
+                    },
+                    components=role_selector_menu,
+                )
+
+                role_interaction_ctx = await self.bot.wait_for_component(
+                    components=role_selector_menu,
+                    timeout=120,
+                )
+                
+                if role_interaction_ctx.ctx.author.id != ctx.author.id:
+                    await role_interaction_ctx.ctx.send("This menu isn't for you!", ephemeral=True)
+                    return
+                
+                await ctx.edit(embed={"title": "Processing...", "description": "Updating configuration..."}, components=[])
+
+                await role_interaction_ctx.ctx.defer(edit_origin=True)
+                
+                selected_role_id_str = role_interaction_ctx.ctx.values[0]
+                selected_role = ctx.guild.get_role(int(selected_role_id_str))
+
+                await self.bot.db.config.update_one(
+                    {"guild_id": str(ctx.guild.id)},
+                    {"$set": {selected_setting_key: str(selected_role.id)}},
+                    upsert=True,
+                )
+
+                try: await self.bot.mem_cache.add(f"config_{ctx.guild.id}", {selected_setting_key: str(selected_role.id)})
+                except ValueError: 
+                    await self.bot.mem_cache.delete(f"config_{ctx.guild.id}")
+                    await self.bot.mem_cache.add(f"config_{ctx.guild.id}", {selected_setting_key: str(selected_role.id)})
+
+                await ctx.edit(
+                    embed={
+                        "title": "Configuration Updated",
+                        "description": f"Set **{selected_setting_key.replace('_', ' ').title()}** to @{selected_role.name}.",
+                        "thumbnail": {"url": ctx.guild.icon.url},
+                    },
+                    components=[],
+                )
+                return
 
             await ctx.edit(
                 embed={
