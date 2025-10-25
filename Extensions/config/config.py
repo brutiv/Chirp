@@ -140,7 +140,7 @@ class Config(Extension):
 				await ctx.edit(
 					embed={
 						"title": "Configuration Updated",
-						"description": f"Set **{selected_setting_key.replace('_', ' ').title()}** to @{selected_role.name}.",
+						"description": f"Set **{selected_setting_key.replace('_', ' ').title()}** to {selected_role.mention}.",
 						"thumbnail": {"url": ctx.guild.icon.url},
 					},
 					components=[],
@@ -352,14 +352,14 @@ class Config(Extension):
 		def _resolve_channel(val):
 			try:
 				ch = ctx.guild.get_channel(int(val))
-				return f"**#{ch.name}**" if ch else f"Channel not found (ID: {val})"
+				return f"<#{ch.id}>" if ch else f"<#{val}>"
 			except Exception:
 				return None
 
 		def _resolve_role(val):
 			try:
 				r = ctx.guild.get_role(int(val))
-				return f"**@{r.name}**" if r else f"Role not found (ID: {val})"
+				return f"<@&{r.id}>" if r else f"<@&{val}>"
 			except Exception:
 				return None
 
