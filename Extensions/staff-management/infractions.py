@@ -92,7 +92,7 @@ class Infractions(Extension):
 				infraction_audit_message = await infraction_audit_channel.send(
 					embed={
 						"title": "Infraction Audit Log",
-						"description": f"> **Member Infracted:** {member}\n> **Infraction Type:** {type}\n> **Infracted By:** {ctx.author}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
+						"description": f"> **Member Infracted:** {member}\n> **Infraction Type:** {type}\n> **Infracted By:** {ctx.author.mention}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
 						"author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
 						"thumbnail": {"url": member.display_avatar.url},
 					}
