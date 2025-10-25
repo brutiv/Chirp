@@ -86,7 +86,7 @@ class Promotions(Extension):
                 promotion_audit_message = await promotion_audit_channel.send(
                     embed={
                         "title": "Promotion Audit Log",
-                        "description": f"> **Member Promoted:** {member}\n> **New Role:** @{new_role.name}\n> **Promoted By:** {ctx.author}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Promotion ID:** {promotion_id_str}",
+                        "description": f"> **Member Promoted:** {member.mention}\n> **New Role:** @{new_role.name}\n> **Promoted By:** {ctx.author.mention}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Promotion ID:** {promotion_id_str}",
                         "author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
                         "thumbnail": {"url": member.display_avatar.url},
                     }
