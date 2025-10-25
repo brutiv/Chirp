@@ -48,9 +48,9 @@ async def on_error(event, *args, **kwargs):
 async def update_servers_activity_task():
     guild_count = len(bot.guilds)
     current_activity = bot.activity
-    if current_activity and current_activity.name == f"Chirp Bot | /help | {guild_count} servers":
+    if current_activity and current_activity.name == f"Chirp | /help | {guild_count} servers":
         return
-    await bot.change_presence(activity=Activity(type=ActivityType.PLAYING, name=f"Chirp Bot | /help | {guild_count} servers"))
+    await bot.change_presence(activity=Activity(type=ActivityType.PLAYING, name=f"Chirp | /help | {guild_count} servers"))
     cls_log.info(f"Updated activity to {guild_count} servers.")
 
 def shutdown():
