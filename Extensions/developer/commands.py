@@ -2,10 +2,12 @@ from interactions import Extension, Timestamp
 from interactions.ext.prefixed_commands import prefixed_command
 from datetime import datetime, timezone
 
+devs = {856196104385986560, 1362053982444454119}
+
 class DeveloperCommands(Extension):
 	@prefixed_command()
 	async def blacklist_server(self, ctx, guild_id: int, *, reason: str = "No reason provided"):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 
 		guild = await self.client.fetch_guild(guild_id)
@@ -44,7 +46,7 @@ class DeveloperCommands(Extension):
 
 	@prefixed_command()
 	async def unblacklist_server(self, ctx, guild_id: int):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		blacklisted_guilds =await self.bot.mem_cache.get("blacklisted_guilds") or []
 		if not blacklisted_guilds:
@@ -61,7 +63,7 @@ class DeveloperCommands(Extension):
 
 	@prefixed_command()
 	async def view_blacklisted_server(self, ctx, guild_id: int):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		blacklisted_guild = await self.bot.db.blacklisted_guilds.find_one({"guild_id": guild_id})
 		if blacklisted_guild:
@@ -81,7 +83,7 @@ class DeveloperCommands(Extension):
 
 	@prefixed_command()
 	async def load(self, ctx, extension_name: str):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		try:
 			self.client.load_extension(f"Extensions.{extension_name}")
@@ -91,7 +93,7 @@ class DeveloperCommands(Extension):
 
 	@prefixed_command()
 	async def unload(self, ctx, extension_name: str):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		try:
 			self.client.unload_extension(f"Extensions.{extension_name}")
@@ -101,7 +103,7 @@ class DeveloperCommands(Extension):
 
 	@prefixed_command()
 	async def reload(self, ctx, extension_name: str):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		try:
 			self.client.reload_extension(f"Extensions.{extension_name}")
@@ -111,7 +113,7 @@ class DeveloperCommands(Extension):
 			
 	@prefixed_command()
 	async def leave_guild(self, ctx, guild_id: int):
-		if ctx.author.id != 856196104385986560:
+		if ctx.author.id not in devs:
 			return
 		guild = self.client.get_guild(guild_id)
 		if guild:
