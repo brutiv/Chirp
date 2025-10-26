@@ -27,6 +27,7 @@ prefixed_commands.setup(bot)
 bot.mem_cache = Cache(Cache.MEMORY)
 bot.db_client = AsyncIOMotorClient(os.environ.get("MONGODB_URI"))
 bot.db = bot.db_client["Chirp"]
+bot.ready = False
 
 @listen()
 async def on_startup():
@@ -39,6 +40,16 @@ async def on_startup():
     
     await bot.change_presence(activity=Activity(type=ActivityType.PLAYING, name=f"Chirp Bot | /help | {len(bot.guilds)} servers"))
     update_servers_activity_task.start()
+    blacklisted_guilds = await bot.db.blacklisted_guilds.find({}).to_list(length=None)
+    await bot.mem_cache.set("blacklisted_guilds", [item["guild_id"] for item in blacklisted_guilds])
+    cls_log.info("Cached blacklisted guilds.")
+
+@listen()
+async def on_ready():
+    if bot.ready:
+        return
+    bot.ready = True
+    cls_log.info(f"Bot is ready. Logged in as {bot.user} (ID: {bot.user.id})")
 
 @listen()
 async def on_error(event, *args, **kwargs):
