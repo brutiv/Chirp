@@ -1,6 +1,6 @@
 import random, string, ast, json, interactions, re
 from datetime import datetime, timezone, timedelta
-from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext
+from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText
 
 class Infractions(Extension):
 
@@ -20,7 +20,11 @@ class Infractions(Extension):
 			return None
 		return datetime.utcnow() + timedelta(seconds=total)
 
-	@slash_command(name="infractions", description="Infractions management commands", sub_cmd_name="infract", sub_cmd_description="Infract a member")
+	@slash_command(name="infractions", description="Infractions management commands")
+	async def infractions(self, ctx):
+		pass
+
+	@infractions.subcommand(sub_cmd_name="infract", sub_cmd_description="Infract a member")
 	@slash_option(
 		name="member",
 		description="The member to Infract",
@@ -46,7 +50,7 @@ class Infractions(Extension):
 		required=False,
 		opt_type=OptionType.STRING
 	)
-	async def infractions(self, ctx, member: User, type: str, reason: str = None, temporary: str = None):
+	async def infract(self, ctx, member: User, type: str, reason: str = None, temporary: str = None):
 		await ctx.defer(ephemeral=True)
 
 		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
@@ -245,14 +249,20 @@ class Infractions(Extension):
 
 		return choices
 
-	@infractions.subcommand(sub_cmd_name="view", sub_cmd_description="View infraction details by Infraction ID")
+	@infractions.subcommand(sub_cmd_name="view", sub_cmd_description="View infraction details by ID or for a member")
 	@slash_option(
 		name="infraction_id",
 		description="The Infraction ID to view",
-		required=True,
+		required=False,
 		opt_type=OptionType.STRING
 	)
-	async def view_infraction(self, ctx, infraction_id: str):
+	@slash_option(
+		name="member",
+		description="The member to view infractions for",
+		required=False,
+		opt_type=OptionType.USER
+	)
+	async def view_infraction(self, ctx, infraction_id: str = None, member: User = None):
 		await ctx.defer(ephemeral=True)
 
 		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
@@ -276,87 +286,127 @@ class Infractions(Extension):
 			if infraction_issuer_role not in ctx.author.roles:
 				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to view infractions."}, ephemeral=True)
 				return
-
-		infraction_data = await self.bot.mem_cache.get(f"infraction_{infraction_id}")
-
-		if not infraction_data:
-			infraction_data = await self.bot.db.infractions.find_one(
-				{"infraction_id": infraction_id, "guild_id": str(ctx.guild.id)}
-			)
-			if not infraction_data:
-				await ctx.send(
-					embed={
-						"description": "<:warning:1430730420307234916> No infraction found with the given Infraction ID.",
-					},
-					ephemeral=True
-				)
-				return
-			await self.bot.mem_cache.set(f"infraction_{infraction_id}", infraction_data)
-		else:
-			if infraction_data.get("guild_id") != str(ctx.guild.id):
-				await ctx.send(
-					embed={
-						"description": "<:warning:1430730420307234916> No infraction found with the given Infraction ID.",
-					},
-					ephemeral=True
-				)
-				return
 		
-		member = ctx.guild.get_member(int(infraction_data["member_id"]))
-		if not member:
-			try:
-				member = await self.bot.fetch_user(int(infraction_data["member_id"]))
-			except Exception:
-				member = None
-		infraction_type = infraction_data.get("infraction_type", "Unknown")
-		issued_by = ctx.guild.get_member(int(infraction_data["issued_by_id"]))
-		if not issued_by:
-			try:
-				issued_by = await self.bot.fetch_user(int(infraction_data["issued_by_id"]))
-			except Exception:
-				issued_by = None
+		if not infraction_id and not member:
+			return await ctx.send(embed={"description": "<:warning:1430730420307234916> You must provide either an Infraction ID or a member to view."}, ephemeral=True)
 
+		if infraction_id and member:
+			return await ctx.send(embed={"description": "<:warning:1430730420307234916> You can only provide an Infraction ID or a member, not both."}, ephemeral=True)
 
-		timestamp = infraction_data.get("timestamp")
-		if timestamp:
-			try:
-				dt = datetime.fromisoformat(timestamp).replace(tzinfo=timezone.utc)
-				timestamp = str(Timestamp.fromdatetime(dt))
-			except Exception:
+		if infraction_id:
+			infraction_data = await self.bot.mem_cache.get(f"infraction_{infraction_id}")
+
+			if not infraction_data:
+				infraction_data = await self.bot.db.infractions.find_one(
+					{"infraction_id": infraction_id, "guild_id": str(ctx.guild.id)}
+				)
+				if not infraction_data:
+					await ctx.send(
+						embed={
+							"description": "<:warning:1430730420307234916> No infraction found with the given Infraction ID.",
+						},
+						ephemeral=True
+					)
+					return
+				await self.bot.mem_cache.set(f"infraction_{infraction_id}", infraction_data)
+			else:
+				if infraction_data.get("guild_id") != str(ctx.guild.id):
+					await ctx.send(
+						embed={
+							"description": "<:warning:1430730420307234916> No infraction found with the given Infraction ID.",
+						},
+						ephemeral=True
+					)
+					return
+			
+			member_obj = ctx.guild.get_member(int(infraction_data["member_id"])) or await self.bot.fetch_user(int(infraction_data["member_id"]))
+			infraction_type = infraction_data.get("infraction_type", "Unknown")
+			issued_by = ctx.guild.get_member(int(infraction_data["issued_by_id"])) or await self.bot.fetch_user(int(infraction_data["issued_by_id"]))
+
+			timestamp = infraction_data.get("timestamp")
+			if timestamp:
+				try:
+					dt = datetime.fromisoformat(timestamp).replace(tzinfo=timezone.utc)
+					timestamp = str(Timestamp.fromdatetime(dt))
+				except Exception:
+					timestamp = "Unknown"
+			else:
 				timestamp = "Unknown"
-		else:
-			timestamp = "Unknown"
-		expires_at = infraction_data.get("expires_at")
-		expires_display = "Never"
-		if expires_at:
-			try:
-				expires_dt = datetime.fromisoformat(expires_at)
-				display_dt = Timestamp.fromdatetime(expires_dt.replace(tzinfo=timezone.utc))
-				expires_display = str(display_dt)
-				if expires_dt < datetime.utcnow():
-					expires_display = f"{expires_display} (expired)"
-			except Exception:
-				expires_display = "Unknown"
-		temporary_value = infraction_data.get("temporary_duration") or ""
+			expires_at = infraction_data.get("expires_at")
+			expires_display = "Never"
+			if expires_at:
+				try:
+					expires_dt = datetime.fromisoformat(expires_at)
+					display_dt = Timestamp.fromdatetime(expires_dt.replace(tzinfo=timezone.utc))
+					expires_display = str(display_dt)
+					if expires_dt < datetime.utcnow():
+						expires_display = f"{expires_display} (expired)"
+				except Exception:
+					expires_display = "Unknown"
 
-		description_lines = [
-			f"> **Member:** {member.mention if member else f'ID: {infraction_data['member_id']}'}",
-			f"> **Infraction Type:** {infraction_type}",
-			f"> **Issued By:** {issued_by.mention if issued_by else f'ID: {infraction_data['issued_by_id']}'}",
-			f"> **Reason:** {infraction_data.get('reason') or 'No reason provided'}",
-			f"> **Issued At:** {timestamp}",
-			f"> **Expires:** {expires_display}",
-		]
+			description_lines = [
+				f"> **Member:** {member_obj.mention if member_obj else f'ID: {infraction_data['member_id']}'}",
+				f"> **Infraction Type:** {infraction_type}",
+				f"> **Issued By:** {issued_by.mention if issued_by else f'ID: {infraction_data['issued_by_id']}'}",
+				f"> **Reason:** {infraction_data.get('reason') or 'No reason provided'}",
+				f"> **Issued At:** {timestamp}",
+				f"> **Expires:** {expires_display}",
+			]
 
-		await ctx.send(
-			embed={
-				"title": f"Infraction Details: {infraction_id}",
-				"description": "\n".join(description_lines),
-				"thumbnail": {"url": member.display_avatar.url if member and member.display_avatar else (ctx.guild.icon.url if ctx.guild.icon else None)},
-				"author": {"name": f"Signed, {issued_by}", "icon_url": issued_by.display_avatar.url if issued_by else None},
-			},
-			ephemeral=True
-		)
+			await ctx.send(
+				embed={
+					"title": f"Infraction Details: {infraction_id}",
+					"description": "\n".join(description_lines),
+					"thumbnail": {"url": member_obj.display_avatar.url if member_obj and member_obj.display_avatar else (ctx.guild.icon.url if ctx.guild.icon else None)},
+					"author": {"name": f"Signed, {issued_by}", "icon_url": issued_by.display_avatar.url if issued_by else None},
+				},
+				ephemeral=True
+			)
+
+		if member:
+			infractions_cursor = self.bot.db.infractions.find({"member_id": str(member.id), "guild_id": str(ctx.guild.id)})
+			infractions_list = await infractions_cursor.to_list(length=100)
+
+			if not infractions_list:
+				return await ctx.send(embed={"description": f"No infractions found for **{member}**."}, ephemeral=True)
+
+			description_lines = []
+			for infrac in infractions_list:
+				timestamp_str = "Unknown"
+				if infrac.get("timestamp"):
+					try:
+						dt = datetime.fromisoformat(infrac["timestamp"]).replace(tzinfo=timezone.utc)
+						timestamp_str = str(Timestamp.fromdatetime(dt))
+					except Exception:
+						pass
+				
+				infrac_type = infrac.get('infraction_type', 'Unknown')
+				reason = infrac.get('reason') or 'No reason provided'
+				
+				expires_str = ""
+				if infrac.get("expires_at"):
+					try:
+						expires_dt = datetime.fromisoformat(infrac["expires_at"])
+						if expires_dt > datetime.utcnow():
+							expires_ts = Timestamp.fromdatetime(expires_dt.replace(tzinfo=timezone.utc))
+							expires_str = f" (Expires {expires_ts})"
+						else:
+							expires_str = " (Expired)"
+					except Exception:
+						pass
+
+				description_lines.append(
+					f"**ID:** `{infrac['infraction_id']}` - {timestamp_str}\n"
+					f"**Type:** {infrac_type} - **Reason:** *{reason}*{expires_str}"
+				)
+
+			embed = {
+				"title": f"Infractions for {member.display_name}",
+				"description": "\n\n".join(description_lines),
+				"thumbnail": {"url": member.display_avatar.url},
+				"footer": {"text": f"Found {len(infractions_list)} infraction(s)."}
+			}
+			await ctx.send(embed=embed, ephemeral=True)
 
 	@infractions.subcommand(sub_cmd_name="revoke", sub_cmd_description="Revoke a infraction")
 	@slash_option(
@@ -506,6 +556,126 @@ class Infractions(Extension):
 				},
 				ephemeral=True
 			)
+
+	@infractions.subcommand(sub_cmd_name="edit", sub_cmd_description="Edit an infraction's details")
+	@slash_option(
+		name="infraction_id",
+		description="The Infraction ID to edit",
+		required=True,
+		opt_type=OptionType.STRING
+	)
+	async def edit_infraction(self, ctx, infraction_id: str):
+
+		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
+		if not config:
+			config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
+			if not config:
+				config = {}
+			await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
+		infraction_issuer_role_id = config.get("infraction_issuer_role")
+
+		if infraction_issuer_role_id:
+			infraction_issuer_role = ctx.guild.get_role(int(infraction_issuer_role_id))
+			if not infraction_issuer_role:
+				try:
+					infraction_issuer_role = await ctx.guild.fetch_role(int(infraction_issuer_role_id))
+				except Exception:
+					infraction_issuer_role = None
+			if not infraction_issuer_role:
+				await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
+				return
+			if infraction_issuer_role not in ctx.author.roles:
+				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to edit infractions."}, ephemeral=True)
+				return
+
+		infraction_data = await self.bot.mem_cache.get(f"infraction_{infraction_id}")
+		if not infraction_data:
+			infraction_data = await self.bot.db.infractions.find_one(
+				{"infraction_id": infraction_id, "guild_id": str(ctx.guild.id)}
+			)
+			if not infraction_data:
+				await ctx.send(embed={"description": "<:warning:1430730420307234916> No infraction found with the given Infraction ID."}, ephemeral=True)
+				return
+
+		modal = Modal(
+			ShortText(label="Reason", custom_id="reason", value=infraction_data.get("reason"), placeholder="New reason for the infraction", required=False),
+			ShortText(label="Temporary Duration", custom_id="temporary", value=infraction_data.get("temporary_duration"), placeholder="e.g., 30d, 1w (leave blank for permanent)", required=False),
+			title=f"Editing Infraction {infraction_id}",
+		)
+		await ctx.send_modal(modal)
+		modal_ctx = await self.bot.wait_for_modal(modal, timeout=120)
+
+		new_reason = modal_ctx.responses["reason"]
+		new_temporary = modal_ctx.responses["temporary"]
+
+		temporary_value = new_temporary.strip() if new_temporary else None
+		expires_at_iso = None
+		expiration_display = None
+		if temporary_value:
+			expiration_dt = self.parse_temporary_duration(temporary_value)
+			if not expiration_dt:
+				await modal_ctx.send(embed={"description": "<:warning:1430730420307234916> Temporary duration must be formatted like 30d, 1w, or 2h30m."}, ephemeral=True)
+				return
+			expires_at_iso = expiration_dt.isoformat()
+			try:
+				expiration_display = str(Timestamp.fromdatetime(expiration_dt.replace(tzinfo=timezone.utc)))
+			except Exception:
+				expiration_display = None
+		expires_line = f"\n> **Expires:** {expiration_display}" if expiration_display else ""
+
+		infraction_data["reason"] = new_reason
+		infraction_data["temporary_duration"] = temporary_value
+		infraction_data["expires_at"] = expires_at_iso
+
+		await self.bot.db.infractions.update_one(
+			{"infraction_id": infraction_id, "guild_id": str(ctx.guild.id)},
+			{"$set": {"reason": new_reason, "temporary_duration": temporary_value, "expires_at": expires_at_iso}}
+		)
+		await self.bot.mem_cache.set(f"infraction_{infraction_id}", infraction_data)
+
+		member = await self.bot.fetch_user(int(infraction_data["member_id"]))
+		issuer = await self.bot.fetch_user(int(infraction_data["issued_by_id"]))
+		infraction_type = infraction_data.get("infraction_type")
+
+		infraction_message_id = infraction_data.get("infraction_message_id")
+		infraction_channel_id = config.get("infraction_log")
+		if infraction_message_id and infraction_channel_id:
+			try:
+				channel = await self.bot.fetch_channel(int(infraction_channel_id))
+				message = await channel.fetch_message(infraction_message_id)
+				await message.edit(
+					embed={
+						"description": f"**{member}**, you have been infracted.\n\n> **Infraction Type:** {infraction_type}\n> **Reason:** {new_reason if new_reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id}{expires_line}",
+						"author": {"name": f"Signed, {issuer}", "icon_url": issuer.display_avatar.url},
+						"thumbnail": {"url": member.display_avatar.url},
+					}
+				)
+			except Exception:
+				pass
+
+		infraction_audit_message_id = infraction_data.get("infraction_audit_message_id")
+		infraction_audit_channel_id = config.get("infraction_audit_log")
+		if infraction_audit_message_id and infraction_audit_channel_id:
+			try:
+				channel = await self.bot.fetch_channel(int(infraction_audit_channel_id))
+				message = await channel.fetch_message(infraction_audit_message_id)
+				await message.edit(
+					embed={
+						"title": "Infraction Audit Log",
+						"description": f"> **Member Infracted:** {member.mention}\n> **Infraction Type:** {infraction_type}\n> **Infracted By:** {issuer.mention}\n> **Reason:** {new_reason if new_reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id}{expires_line}",
+						"author": {"name": f"Signed, {issuer}", "icon_url": issuer.display_avatar.url},
+						"thumbnail": {"url": member.display_avatar.url},
+					}
+				)
+			except Exception:
+				pass
+
+		await modal_ctx.send(
+			embed={
+				"description": f"<:check:1430728952535842907> Successfully edited infraction **{infraction_id}**.",
+			},
+			ephemeral=True
+		)
 
 def setup(bot):
 	Infractions(bot)
