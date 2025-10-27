@@ -103,11 +103,11 @@ class Infractions(Extension):
 				embed={
 					"description": f"You have been infracted in **{ctx.guild.name}**!\n\n> **Infraction Type** {type}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
 					"author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
-					"footer": {"text": f"Chirp Bot", "icon_url": self.bot.user.display_avatar.url},
-					"thumbnail": {"url": ctx.guild.icon.url},
+					"footer": {"text": f"{self.bot.user.username}", "icon_url": self.bot.user.display_avatar.url},
+					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else member.display_avatar.url},
 				}
 			)
-		except Exception:
+		except Exception as e:
 			pass
 		await self.bot.db.infractions.insert_one({
 			"infraction_id": infraction_id_str,
@@ -378,7 +378,7 @@ class Infractions(Extension):
 				timestamp = "Unknown"
 			infraction_revoked_embed = {
 				"description": f"***Infraction ID {infraction_id} has been revoked by {ctx.author} ({ctx.author.id})***\n\n> **Member:** {member} `({member.id})`\n> **Infraction Type**: {infraction_type}\n> **Original Reason:** {infraction_data['reason'] if infraction_data['reason'] else 'No reason provided'}\n> **Issued At:** {timestamp}",
-				"thumbnail": {"url": member.display_avatar.url if member else ctx.guild.icon.url},
+				"thumbnail": {"url": member.display_avatar.url},
 				"author": {"name": f"Signed, {ctx.author}", "icon_url":ctx.author.display_avatar.url},
 			}
 			infraction_message_id = infraction_data.get("infraction_message_id")

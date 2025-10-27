@@ -100,8 +100,8 @@ class Promotions(Extension):
                 embed={
                     "description": f"You have been promoted in **{ctx.guild.name}**!\n\n> **New Role:** @{new_role.name}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Promotion ID:** {promotion_id_str}\n\nCongratulations!",
                     "author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
-                    "footer": {"text": f"Chirp Bot", "icon_url": self.bot.user.display_avatar.url},
-                    "thumbnail": {"url": ctx.guild.icon.url},
+                    "footer": {"text": f"{self.bot.user.username}", "icon_url": self.bot.user.display_avatar.url},
+                    "thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else member.display_avatar.url},
                 }
             )
         except Exception:
@@ -232,7 +232,7 @@ class Promotions(Extension):
                     {"name": "Reason", "value": promotion_data["reason"] if promotion_data["reason"] else "No reason provided", "inline": False},
                     {"name": "Timestamp", "value": timestamp, "inline": False},
                 ],
-                "thumbnail": {"url": member.display_avatar.url if member else ctx.guild.icon.url},
+                "thumbnail": {"url": member.display_avatar.url},
             },
             ephemeral=True
         )
@@ -322,7 +322,7 @@ class Promotions(Extension):
                 timestamp = "Unknown"
             promotion_revoked_embed = {
                 "description": f"***Promotion ID {promotion_id} has been revoked by {ctx.author}***\n\n> **Member:** {member}\n> **Role Revoked:** @{new_role.name if new_role else 'Role not found'}\n> **Original Reason:** {promotion_data['reason'] if promotion_data['reason'] else 'No reason provided'}\n> **Issued At:** {timestamp}",
-                "thumbnail": {"url": member.display_avatar.url if member else ctx.guild.icon.url},
+                "thumbnail": {"url": member.display_avatar.url},
                 "author": {"name": f"Signed, {ctx.author}", "icon_url":ctx.author.display_avatar.url},
             }
             promotion_message_id = promotion_data.get("promotion_message_id")
