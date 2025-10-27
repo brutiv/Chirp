@@ -1,6 +1,6 @@
-import random, string, ast, re, asyncio, humanfriendly
+import random, string, ast, interactions, re, asyncio, humanfriendly
 from datetime import datetime, timezone, timedelta
-from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText, listen, Task, IntervalTrigger, Embed
+from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText, listen, Task, IntervalTrigger, Permissions
 
 class Infractions(Extension):
 
@@ -8,16 +8,23 @@ class Infractions(Extension):
 		if not value:
 			return None
 		try:
-			seconds = humanfriendly.parse_duration(value)
+			seconds = humanfriendly.parse_timespan(value)
 			if seconds <= 0:
 				return None
 			return datetime.utcnow() + timedelta(seconds=seconds)
-		except humanfriendly.InvalidDuration:
+		except humanfriendly.InvalidTimespan:
 			return None
 
 	def __init__(self, bot):
 		self.scheduled_expirations = {}
 		super().__init__()
+
+	async def _get_guild_config(self, guild_id: int) -> dict:
+		config = await self.bot.mem_cache.get(f"guild_config_{guild_id}")
+		if not config:
+			config = await self.bot.db.config.find_one({"guild_id": str(guild_id)}) or {}
+			await self.bot.mem_cache.set(f"guild_config_{guild_id}", config)
+		return config
 
 	@listen()
 	async def on_ready(self):
@@ -76,11 +83,7 @@ class Infractions(Extension):
 		if not guild:
 			return
 
-		config = await self.bot.mem_cache.get(f"guild_config_{guild_id}")
-		if not config:
-			config = await self.bot.db.config.find_one({"guild_id": str(guild_id)}) or {}
-			await self.bot.mem_cache.set(f"guild_config_{guild_id}", config)
-
+		config = await self._get_guild_config(guild_id)
 		channel_id = config.get(log_type_key)
 		message_id = infraction_data.get(message_id_key)
 
@@ -103,9 +106,30 @@ class Infractions(Extension):
 			if 'description' in new_embed:
 				new_embed['description'] = re.sub(r'\n> \*\*Expires:\*\* .*', '', new_embed['description'])
 
-			await message.edit(embed=Embed.from_dict(new_embed))
+			await message.edit(embed=interactions.Embed.from_dict(new_embed))
 		except Exception:
 			pass
+
+	async def _check_permissions(self, ctx: interactions.SlashContext) -> bool:
+		config = await self._get_guild_config(ctx.guild.id)
+		role_id = config.get("infraction_issuer_role")
+
+		if role_id:
+			role = ctx.guild.get_role(int(role_id))
+			if not role:
+				try:
+					role = await ctx.guild.fetch_role(int(role_id))
+				except Exception:
+					await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
+					return False
+			if role in ctx.author.roles:
+				return True
+
+		if ctx.author.has_permission(Permissions.MANAGE_GUILD):
+			return True
+
+		await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to manage infractions."}, ephemeral=True)
+		return False
 
 	@slash_command(name="infractions", description="Infractions management commands")
 	async def infractions(self, ctx):
@@ -140,32 +164,14 @@ class Infractions(Extension):
 	async def infract(self, ctx, member: User, type: str, reason: str = None, temporary: str = None):
 		await ctx.defer(ephemeral=True)
 
-		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
-		if not config:
-			config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
-			if not config:
-				config = {}
-			await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
-		infraction_issuer_role_id = config.get("infraction_issuer_role")
-
-		if infraction_issuer_role_id:
-			infraction_issuer_role = ctx.guild.get_role(int(infraction_issuer_role_id))
-			if not infraction_issuer_role:
-				try:
-					infraction_issuer_role = await ctx.guild.fetch_role(int(infraction_issuer_role_id))
-				except Exception:
-					infraction_issuer_role = None
-			if not infraction_issuer_role:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
-				return
-			if infraction_issuer_role not in ctx.author.roles:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to infract others."}, ephemeral=True)
-				return
+		if not await self._check_permissions(ctx):
+			return
 			
 		if member.id == ctx.author.id:
 			await ctx.send(embed={"description": "<:warning:1430730420307234916> You cannot infract yourself."}, ephemeral=True)
 			return
 		
+		config = await self._get_guild_config(ctx.guild.id)
 		infraction_types = config.get("infraction_types", []) or []
 		if type not in infraction_types:
 			await ctx.send(embed={"description": "<:warning:1430730420307234916> The specified infraction type is not valid."}, ephemeral=True)
@@ -277,66 +283,26 @@ class Infractions(Extension):
 
 	@infractions.autocomplete("type")
 	async def infraction_type_autocomplete(self, ctx: AutocompleteContext):
-		cfg = await self.bot.mem_cache.get(f"config_{ctx.guild.id}")
-		if isinstance(cfg, str):
-			try:
-				cfg = ast.literal_eval(cfg)
-			except Exception:
-				cfg = {}
-		if not cfg:
-			cfg = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)}) or {}
-			await self.bot.mem_cache.set(f"config_{ctx.guild.id}", cfg)
-
+		cfg = await self._get_guild_config(ctx.guild.id)
 		infraction_types = cfg.get("infraction_types", []) or []
-
-		if isinstance(infraction_types, str):
-			try:
-				parsed = ast.literal_eval(infraction_types)
-				infraction_types = parsed if isinstance(parsed, list) else [parsed]
-			except Exception:
-				infraction_types = [infraction_types]
 
 		if not isinstance(infraction_types, list):
 			infraction_types = [str(infraction_types)]
 
-		cleaned = []
-		seen = set()
-		for item in infraction_types:
-			if item is None:
-				continue
-			s = str(item).strip()
-			if not s:
-				continue
-			s = s[:100]
-			if s in seen:
-				continue
-			seen.add(s)
-			cleaned.append(s)
+		cleaned_types = sorted(list(set(str(t).strip() for t in infraction_types if t and str(t).strip())))
 
-		q = (getattr(ctx, "input_text", "") or "").lower()
+		q = ctx.input_text.lower()
 		if q:
-			filtered = [s for s in cleaned if q in s.lower()]
+			filtered = [t for t in cleaned_types if q in t.lower()]
 		else:
-			filtered = cleaned
+			filtered = cleaned_types
 
-		filtered = filtered[:25]
-
-		choices = [{"name": s, "value": s} for s in filtered]
+		choices = [{"name": t, "value": t} for t in filtered[:25]]
 
 		if not choices:
 			choices = [{"name": "No infraction types set", "value": "none"}]
 
-		send_fn = getattr(ctx, "send_autocomplete", None) or getattr(ctx, "send", None)
-		if callable(send_fn):
-			try:
-				await send_fn(choices)
-				return
-			except TypeError:
-				pass
-			except Exception:
-				pass
-
-		return choices
+		await ctx.send(choices)
 
 	@infractions.subcommand(sub_cmd_name="view", sub_cmd_description="View infraction details by ID or for a member")
 	@slash_option(
@@ -354,27 +320,8 @@ class Infractions(Extension):
 	async def view_infraction(self, ctx, infraction_id: str = None, member: User = None):
 		await ctx.defer(ephemeral=True)
 
-		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
-		if not config:
-			config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
-			if not config:
-				config = {}
-			await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
-		infraction_issuer_role_id = config.get("infraction_issuer_role")
-
-		if infraction_issuer_role_id:
-			infraction_issuer_role = ctx.guild.get_role(int(infraction_issuer_role_id))
-			if not infraction_issuer_role:
-				try:
-					infraction_issuer_role = await ctx.guild.fetch_role(int(infraction_issuer_role_id))
-				except Exception:
-					infraction_issuer_role = None
-			if not infraction_issuer_role:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
-				return
-			if infraction_issuer_role not in ctx.author.roles:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to view infractions."}, ephemeral=True)
-				return
+		if not await self._check_permissions(ctx):
+			return
 		
 		if not infraction_id and not member:
 			return await ctx.send(embed={"description": "<:warning:1430730420307234916> You must provide either an Infraction ID or a member to view."}, ephemeral=True)
@@ -507,27 +454,8 @@ class Infractions(Extension):
 	async def revoke_infraction(self, ctx, infraction_id: str):
 		await ctx.defer(ephemeral=True)
 
-		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
-		if not config:
-			config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
-			if not config:
-				config = {}
-			await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
-		infraction_issuer_role_id = config.get("infraction_issuer_role")
-
-		if infraction_issuer_role_id:
-			infraction_issuer_role = ctx.guild.get_role(int(infraction_issuer_role_id))
-			if not infraction_issuer_role:
-				try:
-					infraction_issuer_role = await ctx.guild.fetch_role(int(infraction_issuer_role_id))
-				except Exception:
-					infraction_issuer_role = None
-			if not infraction_issuer_role:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
-				return
-			if infraction_issuer_role not in ctx.author.roles:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to revoke infractions."}, ephemeral=True)
-				return
+		if not await self._check_permissions(ctx):
+			return
 
 		infraction_data = await self.bot.mem_cache.get(f"infraction_{infraction_id}")
 
@@ -594,12 +522,7 @@ class Infractions(Extension):
 			}
 			infraction_message_id = infraction_data.get("infraction_message_id")
 			if infraction_message_id:
-				config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
-				if not config:
-					config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
-					if not config:
-						config = {}
-					await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
+				config = await self._get_guild_config(ctx.guild.id)
 				infraction_channel_id = config.get("infraction_log")
 				if infraction_channel_id:
 					infraction_channel = ctx.guild.get_channel(int(infraction_channel_id))
@@ -655,27 +578,8 @@ class Infractions(Extension):
 	)
 	async def edit_infraction(self, ctx, infraction_id: str):
 
-		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
-		if not config:
-			config = await self.bot.db.config.find_one({"guild_id": str(ctx.guild.id)})
-			if not config:
-				config = {}
-			await self.bot.mem_cache.set(f"guild_config_{ctx.guild.id}", config)
-		infraction_issuer_role_id = config.get("infraction_issuer_role")
-
-		if infraction_issuer_role_id:
-			infraction_issuer_role = ctx.guild.get_role(int(infraction_issuer_role_id))
-			if not infraction_issuer_role:
-				try:
-					infraction_issuer_role = await ctx.guild.fetch_role(int(infraction_issuer_role_id))
-				except Exception:
-					infraction_issuer_role = None
-			if not infraction_issuer_role:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> Infraction issuer role not found in the guild."}, ephemeral=True)
-				return
-			if infraction_issuer_role not in ctx.author.roles:
-				await ctx.send(embed={"description": "<:warning:1430730420307234916> You don't have permission to edit infractions."}, ephemeral=True)
-				return
+		if not await self._check_permissions(ctx):
+			return
 
 		infraction_data = await self.bot.mem_cache.get(f"infraction_{infraction_id}")
 		if not infraction_data:
@@ -729,6 +633,7 @@ class Infractions(Extension):
 		issuer = await self.bot.fetch_user(int(infraction_data["issued_by_id"]))
 		infraction_type = infraction_data.get("infraction_type")
 
+		config = await self._get_guild_config(ctx.guild.id)
 		infraction_message_id = infraction_data.get("infraction_message_id")
 		infraction_channel_id = config.get("infraction_log")
 		if infraction_message_id and infraction_channel_id:
@@ -786,11 +691,7 @@ class Infractions(Extension):
 			if not guild:
 				continue
 
-			config = await self.bot.mem_cache.get(f"guild_config_{guild_id}")
-			if not config:
-				config = await self.bot.db.config.find_one({"guild_id": str(guild_id)}) or {}
-				await self.bot.mem_cache.set(f"guild_config_{guild_id}", config)
-
+			config = await self._get_guild_config(guild_id)
 			audit_channel_id = config.get("infraction_audit_log")
 			audit_message_id = infraction_data.get("infraction_audit_message_id")
 
