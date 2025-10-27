@@ -1,6 +1,6 @@
-import random, string, ast, json, interactions, re
+import random, string, ast, json, interactions, re, asyncio
 from datetime import datetime, timezone, timedelta
-from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText
+from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText, listen, Task, IntervalTrigger
 
 class Infractions(Extension):
 
@@ -19,6 +19,98 @@ class Infractions(Extension):
 		if total <= 0:
 			return None
 		return datetime.utcnow() + timedelta(seconds=total)
+
+	def __init__(self, bot):
+		self.scheduled_expirations = {}
+		super().__init__()
+
+	@listen()
+	async def on_ready(self):
+		if not getattr(self.bot, "ready_once", False):
+			self.bot.ready_once = True
+			await self.schedule_all_expirations()
+
+	async def schedule_all_expirations(self):
+		now = datetime.utcnow()
+		now_iso = now.isoformat()
+		query = {"expires_at": {"$ne": None}, "expired_notified": {"$ne": True}}
+		pending_infractions = await self.bot.db.infractions.find(query).to_list(length=None)
+
+		for infraction_data in pending_infractions:
+			self.schedule_infraction_expiry(infraction_data)
+
+	def schedule_infraction_expiry(self, infraction_data: dict):
+		infraction_id = infraction_data["infraction_id"]
+		expires_at_str = infraction_data.get("expires_at")
+
+		if infraction_id in self.scheduled_expirations:
+			self.scheduled_expirations[infraction_id].cancel()
+
+		if not expires_at_str:
+			return
+
+		expires_at = datetime.fromisoformat(expires_at_str)
+		now = datetime.utcnow()
+		
+		if expires_at > now:
+			delay = (expires_at - now).total_seconds()
+			task = asyncio.create_task(self.handle_infraction_expiry(infraction_data, delay=delay))
+			self.scheduled_expirations[infraction_id] = task
+		else:
+			asyncio.create_task(self.handle_infraction_expiry(infraction_data, delay=0))
+
+	async def handle_infraction_expiry(self, infraction_data: dict, delay: float):
+		if delay > 0:
+			await asyncio.sleep(delay)
+
+		infraction_id = infraction_data["infraction_id"]
+		fresh_data = await self.bot.db.infractions.find_one({"infraction_id": infraction_id})
+
+		if not fresh_data or fresh_data.get("expired_notified"):
+			return
+
+		await self._update_log_message(fresh_data, "infraction_audit_log", "infraction_audit_message_id")
+		await self._update_log_message(fresh_data, "infraction_log", "infraction_message_id")
+
+		if infraction_id in self.scheduled_expirations:
+			del self.scheduled_expirations[infraction_id]
+
+	async def _update_log_message(self, infraction_data: dict, log_type_key: str, message_id_key: str):
+		guild_id = int(infraction_data["guild_id"])
+		guild = self.bot.get_guild(guild_id)
+		if not guild:
+			return
+
+		config = await self.bot.mem_cache.get(f"guild_config_{guild_id}")
+		if not config:
+			config = await self.bot.db.config.find_one({"guild_id": str(guild_id)}) or {}
+			await self.bot.mem_cache.set(f"guild_config_{guild_id}", config)
+
+		channel_id = config.get(log_type_key)
+		message_id = infraction_data.get(message_id_key)
+
+		if not channel_id or not message_id:
+			return
+
+		try:
+			channel = await self.bot.fetch_channel(int(channel_id))
+			message = await channel.fetch_message(int(message_id))
+			
+			if not message.embeds:
+				return
+
+			original_embed = message.embeds[0]
+			new_embed = original_embed.to_dict()
+
+			if 'title' in new_embed and new_embed['title']:
+				new_embed['title'] = f"{new_embed['title']} (Expired)"
+			
+			if 'description' in new_embed:
+				new_embed['description'] = re.sub(r'\n> \*\*Expires:\*\* .*', '', new_embed['description'])
+
+			await message.edit(embed=interactions.Embed.from_dict(new_embed))
+		except Exception:
+			pass
 
 	@slash_command(name="infractions", description="Infractions management commands")
 	async def infractions(self, ctx):
@@ -179,6 +271,8 @@ class Infractions(Extension):
 			"expires_at": expires_at_iso,
 			"temporary_duration": temporary_value
 		})
+		if expires_at_iso:
+			self.schedule_infraction_expiry(await self.bot.db.infractions.find_one({"infraction_id": infraction_id_str}))
 		await ctx.send(
 			embed={
 				"description": f"<:check:1430728952535842907> Successfully infracted **{member}**{f' (expires {expiration_display})' if expiration_display else ''}.",
@@ -632,6 +726,9 @@ class Infractions(Extension):
 			{"$set": {"reason": new_reason, "temporary_duration": temporary_value, "expires_at": expires_at_iso}}
 		)
 		await self.bot.mem_cache.set(f"infraction_{infraction_id}", infraction_data)
+		
+		self.schedule_infraction_expiry(infraction_data)
+
 
 		member = await self.bot.fetch_user(int(infraction_data["member_id"]))
 		issuer = await self.bot.fetch_user(int(infraction_data["issued_by_id"]))
@@ -676,6 +773,63 @@ class Infractions(Extension):
 			},
 			ephemeral=True
 		)
+
+	@Task.create(IntervalTrigger(minutes=1))
+	async def check_expired_infractions(self):
+		if not self.bot.ready:
+			return
+
+		now = datetime.utcnow()
+		now_iso = now.isoformat()
+
+		query = {"expires_at": {"$ne": None, "$lt": now_iso}, "expired_notified": {"$ne": True}}
+		expired_infractions = await self.bot.db.infractions.find(query).to_list(length=None)
+
+		for infraction_data in expired_infractions:
+			guild_id = int(infraction_data["guild_id"])
+			guild = self.bot.get_guild(guild_id)
+			if not guild:
+				continue
+
+			config = await self.bot.mem_cache.get(f"guild_config_{guild_id}")
+			if not config:
+				config = await self.bot.db.config.find_one({"guild_id": str(guild_id)}) or {}
+				await self.bot.mem_cache.set(f"guild_config_{guild_id}", config)
+
+			audit_channel_id = config.get("infraction_audit_log")
+			audit_message_id = infraction_data.get("infraction_audit_message_id")
+
+			if not audit_channel_id or not audit_message_id:
+				await self.bot.db.infractions.update_one(
+					{"_id": infraction_data["_id"]},
+					{"$set": {"expired_notified": True}}
+				)
+				continue
+
+			try:
+				audit_channel = await self.bot.fetch_channel(int(audit_channel_id))
+				audit_message = await audit_channel.fetch_message(int(audit_message_id))
+				
+				original_embed = audit_message.embeds[0]
+				new_embed = original_embed.to_dict()
+
+				new_embed['title'] = f"{new_embed.get('title', 'Infraction Audit Log')} (Expired)"
+				
+				if 'description' in new_embed:
+					new_embed['description'] = re.sub(r'\n> \*\*Expires:\*\* .*', '', new_embed['description'])
+					new_embed['description'] += "\n> **Status:** Expired"
+
+				await audit_message.edit(embed=new_embed)
+
+			except Exception as e:
+				print(f"Could not update expired infraction message for {infraction_data['infraction_id']}: {e}")
+			finally:
+				await self.bot.db.infractions.update_one(
+					{"_id": infraction_data["_id"]},
+					{"$set": {"expired_notified": True}}
+				)
+				infraction_data['expired_notified'] = True
+				await self.bot.mem_cache.set(f"infraction_{infraction_data['infraction_id']}", infraction_data)
 
 def setup(bot):
 	Infractions(bot)
