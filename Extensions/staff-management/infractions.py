@@ -1,8 +1,24 @@
-import random, string, ast, json, interactions
-from datetime import datetime, timezone
+import random, string, ast, json, interactions, re
+from datetime import datetime, timezone, timedelta
 from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext
 
 class Infractions(Extension):
+
+	def parse_temporary_duration(self, value: str):
+		if not value:
+			return None
+		cleaned = ''.join(value.lower().split())
+		if not cleaned:
+			return None
+		if not re.fullmatch(r'(\d+[smhdw])+', cleaned):
+			return None
+		unit_map = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
+		total = 0
+		for amount, unit in re.findall(r'(\d+)([smhdw])', cleaned):
+			total += int(amount) * unit_map[unit]
+		if total <= 0:
+			return None
+		return datetime.utcnow() + timedelta(seconds=total)
 
 	@slash_command(name="infractions", description="Infractions management commands", sub_cmd_name="infract", sub_cmd_description="Infract a member")
 	@slash_option(
@@ -24,7 +40,13 @@ class Infractions(Extension):
 		required=False,
 		opt_type=OptionType.STRING
 	)
-	async def infractions(self, ctx, member: User, type: str, reason: str = None):
+	@slash_option(
+		name="temporary",
+		description="Duration for a temporary infraction (e.g., 30d, 1w)",
+		required=False,
+		opt_type=OptionType.STRING
+	)
+	async def infractions(self, ctx, member: User, type: str, reason: str = None, temporary: str = None):
 		await ctx.defer(ephemeral=True)
 
 		config = await self.bot.mem_cache.get(f"guild_config_{ctx.guild.id}")
@@ -58,10 +80,28 @@ class Infractions(Extension):
 			await ctx.send(embed={"description": "<:warning:1430730420307234916> The specified infraction type is not valid."}, ephemeral=True)
 			return
 
+		temporary_value = temporary.strip() if temporary else None
+		expires_at_iso = None
+		expiration_display = None
+		if temporary_value:
+			expiration_dt = self.parse_temporary_duration(temporary_value)
+			if not expiration_dt:
+				await ctx.send(embed={"description": "<:warning:1430730420307234916> Temporary duration must be formatted like 30d, 1w, or 2h30m."}, ephemeral=True)
+				return
+			expires_at_iso = expiration_dt.isoformat()
+			try:
+				expiration_display = str(Timestamp.fromdatetime(expiration_dt.replace(tzinfo=timezone.utc)))
+			except Exception:
+				expiration_display = None
+		expires_line = f"\n> **Expires:** {expiration_display}" if expiration_display else ""
+
+		issued_at = datetime.utcnow()
+		timestamp_iso = issued_at.isoformat()
 		infraction_id = (random.choices(string.ascii_uppercase + string.digits, k=8))
 		infraction_id_str = ''.join(infraction_id)
 			
 		infraction_channel_id = config.get("infraction_log")
+		infraction_message = None
 		infraction_audit_message = None
 		if infraction_channel_id:
 			infraction_channel = ctx.guild.get_channel(int(infraction_channel_id))
@@ -74,7 +114,7 @@ class Infractions(Extension):
 				infraction_message = await infraction_channel.send(
 					f"{member.mention}",
 					embed={
-						"description": f"**{member}**, you have been infracted.\n\n> **Infraction Type:** {type}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
+						"description": f"**{member}**, you have been infracted.\n\n> **Infraction Type:** {type}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}{expires_line}",
 						"author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
 						"thumbnail": {"url": member.display_avatar.url},
 					}
@@ -92,7 +132,7 @@ class Infractions(Extension):
 				infraction_audit_message = await infraction_audit_channel.send(
 					embed={
 						"title": "Infraction Audit Log",
-						"description": f"> **Member Infracted:** {member.mention}\n> **Infraction Type:** {type}\n> **Infracted By:** {ctx.author.mention}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
+						"description": f"> **Member Infracted:** {member.mention}\n> **Infraction Type:** {type}\n> **Infracted By:** {ctx.author.mention}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}{expires_line}",
 						"author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
 						"thumbnail": {"url": member.display_avatar.url},
 					}
@@ -101,7 +141,7 @@ class Infractions(Extension):
 		try:
 			await member.send(
 				embed={
-					"description": f"You have been infracted in **{ctx.guild.name}**!\n\n> **Infraction Type** {type}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}",
+					"description": f"You have been infracted in **{ctx.guild.name}**!\n\n> **Infraction Type** {type}\n> **Reason:** {reason if reason else 'No reason provided'}\n> **Infraction ID:** {infraction_id_str}{expires_line}",
 					"author": {"name": f"Signed, {ctx.author}", "icon_url": ctx.author.display_avatar.url},
 					"footer": {"text": f"{self.bot.user.username}", "icon_url": self.bot.user.display_avatar.url},
 					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else member.display_avatar.url},
@@ -115,10 +155,12 @@ class Infractions(Extension):
 			"member_id": str(member.id),
 			"infraction_type": type,
 			"issued_by_id": str(ctx.author.id),
-			"infraction_message_id": infraction_message.id if infraction_channel_id else None,
-			"infraction_audit_message_id": infraction_audit_message.id if infraction_audit_channel_id else None,
+			"infraction_message_id": infraction_message.id if infraction_message else None,
+			"infraction_audit_message_id": infraction_audit_message.id if infraction_audit_message else None,
 			"reason": reason,
-			"timestamp": datetime.utcnow().isoformat()
+			"timestamp": timestamp_iso,
+			"expires_at": expires_at_iso,
+			"temporary_duration": temporary_value
 		})
 		await self.bot.mem_cache.set(f"infraction_{infraction_id_str}", {
 			"infraction_id": infraction_id_str,
@@ -126,14 +168,16 @@ class Infractions(Extension):
 			"member_id": str(member.id),
 			"infraction_type": type,
 			"issued_by_id": str(ctx.author.id),
-			"infraction_message_id": infraction_message.id if infraction_channel_id else None,
-			"infraction_audit_message_id": infraction_audit_message.id if infraction_audit_channel_id else None,
+			"infraction_message_id": infraction_message.id if infraction_message else None,
+			"infraction_audit_message_id": infraction_audit_message.id if infraction_audit_message else None,
 			"reason": reason,
-			"timestamp": datetime.utcnow().isoformat()
+			"timestamp": timestamp_iso,
+			"expires_at": expires_at_iso,
+			"temporary_duration": temporary_value
 		})
 		await ctx.send(
 			embed={
-				"description": f"<:check:1430728952535842907> Successfully infracted **{member}**.",
+				"description": f"<:check:1430728952535842907> Successfully infracted **{member}**{f' (expires {expiration_display})' if expiration_display else ''}.",
 			},
 			ephemeral=True
 		)
@@ -282,18 +326,34 @@ class Infractions(Extension):
 				timestamp = "Unknown"
 		else:
 			timestamp = "Unknown"
+		expires_at = infraction_data.get("expires_at")
+		expires_display = "Never"
+		if expires_at:
+			try:
+				expires_dt = datetime.fromisoformat(expires_at)
+				display_dt = Timestamp.fromdatetime(expires_dt.replace(tzinfo=timezone.utc))
+				expires_display = str(display_dt)
+				if expires_dt < datetime.utcnow():
+					expires_display = f"{expires_display} (expired)"
+			except Exception:
+				expires_display = "Unknown"
+		temporary_value = infraction_data.get("temporary_duration") or ""
+
+		description_lines = [
+			f"> **Member:** {member.mention if member else f'ID: {infraction_data['member_id']}'}",
+			f"> **Infraction Type:** {infraction_type}",
+			f"> **Issued By:** {issued_by.mention if issued_by else f'ID: {infraction_data['issued_by_id']}'}",
+			f"> **Reason:** {infraction_data.get('reason') or 'No reason provided'}",
+			f"> **Issued At:** {timestamp}",
+			f"> **Expires:** {expires_display}",
+		]
 
 		await ctx.send(
 			embed={
-				"title": "Infraction Details",
-				"fields": [
-					{"name": "Member", "value": f"{member} ({member.id})" if member else f"Member not found ({infraction_data['member_id']})", "inline": True},
-					{"name": "Infraction Type", "value": infraction_type, "inline": True},
-					{"name": "Issued By", "value": f"{issued_by} ({issued_by.id})" if issued_by else f"Issuer not found ({infraction_data['issued_by_id']})", "inline": True},
-					{"name": "Reason", "value": infraction_data["reason"] if infraction_data["reason"] else "No reason provided", "inline": False},
-					{"name": "Timestamp", "value": timestamp, "inline": False},
-				],
-				"thumbnail": {"url": member.display_avatar.url if member else ctx.guild.icon.url},
+				"title": f"Infraction Details: {infraction_id}",
+				"description": "\n".join(description_lines),
+				"thumbnail": {"url": member.display_avatar.url if member and member.display_avatar else (ctx.guild.icon.url if ctx.guild.icon else None)},
+				"author": {"name": f"Signed, {issued_by}", "icon_url": issued_by.display_avatar.url if issued_by else None},
 			},
 			ephemeral=True
 		)
@@ -376,8 +436,20 @@ class Infractions(Extension):
 					timestamp = "Unknown"
 			else:
 				timestamp = "Unknown"
+			expires_at = infraction_data.get("expires_at")
+			expires_display = "Never"
+			if expires_at:
+				try:
+					expires_dt = datetime.fromisoformat(expires_at)
+					display_dt = Timestamp.fromdatetime(expires_dt.replace(tzinfo=timezone.utc))
+					expires_display = str(display_dt)
+					if expires_dt < datetime.utcnow():
+						expires_display = f"{expires_display} (expired)"
+				except Exception:
+					expires_display = "Unknown"
+			temporary_value = infraction_data.get("temporary_duration") or ""
 			infraction_revoked_embed = {
-				"description": f"***Infraction ID {infraction_id} has been revoked by {ctx.author} ({ctx.author.id})***\n\n> **Member:** {member} `({member.id})`\n> **Infraction Type**: {infraction_type}\n> **Original Reason:** {infraction_data['reason'] if infraction_data['reason'] else 'No reason provided'}\n> **Issued At:** {timestamp}",
+				"description": f"***Infraction ID {infraction_id} has been revoked by {ctx.author} ({ctx.author.id})***\n\n> **Member:** {member} `({member.id})`\n> **Infraction Type**: {infraction_type}\n> **Original Reason:** {infraction_data['reason'] if infraction_data['reason'] else 'No reason provided'}\n> **Issued At:** {timestamp}\n> **Expires:** {expires_display}\n> **Temporary Input:** {temporary_value if temporary_value else 'None'}",
 				"thumbnail": {"url": member.display_avatar.url},
 				"author": {"name": f"Signed, {ctx.author}", "icon_url":ctx.author.display_avatar.url},
 			}
