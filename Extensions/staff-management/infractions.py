@@ -1,24 +1,19 @@
-import random, string, ast, json, interactions, re, asyncio
+import random, string, ast, re, asyncio, humanfriendly
 from datetime import datetime, timezone, timedelta
-from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText, listen, Task, IntervalTrigger
+from interactions import Extension, slash_command, slash_option, OptionType, User, Timestamp, AutocompleteContext, Modal, ShortText, listen, Task, IntervalTrigger, Embed
 
 class Infractions(Extension):
 
 	def parse_temporary_duration(self, value: str):
 		if not value:
 			return None
-		cleaned = ''.join(value.lower().split())
-		if not cleaned:
+		try:
+			seconds = humanfriendly.parse_duration(value)
+			if seconds <= 0:
+				return None
+			return datetime.utcnow() + timedelta(seconds=seconds)
+		except humanfriendly.InvalidDuration:
 			return None
-		if not re.fullmatch(r'(\d+[smhdw])+', cleaned):
-			return None
-		unit_map = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
-		total = 0
-		for amount, unit in re.findall(r'(\d+)([smhdw])', cleaned):
-			total += int(amount) * unit_map[unit]
-		if total <= 0:
-			return None
-		return datetime.utcnow() + timedelta(seconds=total)
 
 	def __init__(self, bot):
 		self.scheduled_expirations = {}
@@ -108,7 +103,7 @@ class Infractions(Extension):
 			if 'description' in new_embed:
 				new_embed['description'] = re.sub(r'\n> \*\*Expires:\*\* .*', '', new_embed['description'])
 
-			await message.edit(embed=interactions.Embed.from_dict(new_embed))
+			await message.edit(embed=Embed.from_dict(new_embed))
 		except Exception:
 			pass
 
