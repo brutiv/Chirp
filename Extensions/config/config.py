@@ -30,7 +30,7 @@ class Config(Extension):
 		embed = {
 			"title": "Configuration Menu",
 			"description": "Select the setting you want to configure from the menu below.",
-			"thumbnail": {"url": ctx.guild.icon.url},
+			"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 		}
 
 		await ctx.send(embed=embed, components=select_menu)
@@ -63,7 +63,7 @@ class Config(Extension):
 					embed={
 						"title": "No Channels Available",
 						"description": "No suitable text channels were found in this guild.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=[],
 				)
@@ -89,7 +89,7 @@ class Config(Extension):
 					embed={
 						"title": "No Roles Available",
 						"description": "No roles were found in this guild.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=[],
 				)
@@ -108,7 +108,7 @@ class Config(Extension):
 					embed={
 						"title": f"Select Role for {selected_setting_key.replace('_', ' ').title()}",
 						"description": "Choose a role from the menu below.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=role_selector_menu,
 				)
@@ -141,7 +141,7 @@ class Config(Extension):
 					embed={
 						"title": "Configuration Updated",
 						"description": f"Set **{selected_setting_key.replace('_', ' ').title()}** to {selected_role.mention}.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=[],
 				)
@@ -161,7 +161,7 @@ class Config(Extension):
 					embed={
 						"title": "Infraction Types Configuration",
 						"description": "Choose to add or remove an infraction type from the menu below.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=add_remove_selector,
 				)
@@ -201,7 +201,7 @@ class Config(Extension):
 					await modal_ctx.send(embed={
 						"title": "Infraction Type Added",
 						"description": f"Successfully added infraction type: **{infraction_type_name}**",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					}, ephemeral=True)
 					return
 
@@ -212,7 +212,7 @@ class Config(Extension):
 							embed={
 								"title": "No Infraction Types Found",
 								"description": "There are no infraction types to remove.",
-								"thumbnail": {"url": ctx.guild.icon.url},
+								"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 							},
 							components=[],
 						)
@@ -233,7 +233,7 @@ class Config(Extension):
 						embed={
 							"title": "Select Infraction Type to Remove",
 							"description": "Choose an infraction type from the menu below.",
-							"thumbnail": {"url": ctx.guild.icon.url},
+							"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 						},
 						components=infraction_type_selector,
 					)
@@ -254,7 +254,7 @@ class Config(Extension):
 						embed={
 							"title": "Infraction Type Removed",
 							"description": f"Successfully removed infraction type: **{selected_type}**",
-							"thumbnail": {"url": ctx.guild.icon.url},
+							"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 						},
 						components=[],
 					)
@@ -264,7 +264,7 @@ class Config(Extension):
 				embed={
 					"title": f"Select Channel for {selected_setting_key.replace('_', ' ').title()}",
 					"description": "Choose a channel from the menu below.",
-					"thumbnail": {"url": ctx.guild.icon.url},
+					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 				},
 				components=channel_selector_menu,
 			)
@@ -297,7 +297,7 @@ class Config(Extension):
 				embed={
 					"title": "Configuration Updated",
 					"description": f"Set **{selected_setting_key.replace('_', ' ').title()}** to {selected_channel.mention}.",
-					"thumbnail": {"url": ctx.guild.icon.url},
+					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 				},
 				components=[],
 			)
@@ -308,7 +308,7 @@ class Config(Extension):
 					embed={
 						"title": "Configuration Menu Expired",
 						"description": "You did not make a selection in time. Please run the command again to configure settings.",
-						"thumbnail": {"url": ctx.guild.icon.url},
+						"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 					},
 					components=[],
 				)
@@ -333,7 +333,7 @@ class Config(Extension):
 				embed={
 					"title": "No Configuration Found",
 					"description": "No configuration settings have been set for this guild.",
-					"thumbnail": {"url": ctx.guild.icon.url},
+					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 				},
 				ephemeral=True,
 			)
@@ -344,7 +344,7 @@ class Config(Extension):
 				embed={
 					"title": "Configuration Empty",
 					"description": "Configuration document exists but no specific settings are set.",
-					"thumbnail": {"url": ctx.guild.icon.url},
+					"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 				},
 				ephemeral=True,
 			)
@@ -388,7 +388,7 @@ class Config(Extension):
 			embed={
 				"title": "Current Configuration",
 				"description": "\n".join(embed_lines),
-				"thumbnail": {"url": ctx.guild.icon.url},
+				"thumbnail": {"url": ctx.guild.icon.url if ctx.guild.icon else None},
 			},
 			ephemeral=True,
 		)
