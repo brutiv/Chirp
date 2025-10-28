@@ -2,7 +2,6 @@ import os
 import logging
 import signal
 import asyncio
-import uvicorn
 
 from interactions import Client, Intents, listen, Activity, ActivityType, Task, IntervalTrigger
 from interactions.ext import prefixed_commands
@@ -14,6 +13,7 @@ from dotenv import load_dotenv
 from logging.handlers import RotatingFileHandler
 
 from api import context
+from uvicon import start_uvicorn
 
 load_dotenv()
 
@@ -74,11 +74,6 @@ bot.load_extension("Extensions.config.config")
 bot.load_extension("Extensions.staff-management.promotions")
 bot.load_extension("Extensions.staff-management.infractions")
 
-async def start_uvicorn():
-    config = uvicorn.Config(app="api.bot_api:app", host="0.0.0.0", port=6248, loop="asyncio", lifespan="on") # 45.139.50.11:6248
-    server = uvicorn.Server(config)
-    await server.serve()
-
 def shutdown():
     cls_log.info("Shutting down...")
     bot.db_client.close()
@@ -88,6 +83,7 @@ signal.signal(signal.SIGINT, lambda s,f: shutdown())
 signal.signal(signal.SIGTERM, lambda s,f: shutdown())
 
 async def main():
+    cls_log.info("Launching Uvicorn server task...")
     uvicorn_task = asyncio.create_task(start_uvicorn())
     bot_task = asyncio.create_task(bot.astart(os.environ.get("DISCORD_TOKEN")))
     done, pending = await asyncio.wait({uvicorn_task, bot_task}, return_when=asyncio.FIRST_COMPLETED)

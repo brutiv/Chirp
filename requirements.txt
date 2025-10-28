@@ -3,3 +3,5 @@ aiocache[redis]
 python-dotenv
 motor
 humanfriendly
+fastapi
+uvicorn[standard]
