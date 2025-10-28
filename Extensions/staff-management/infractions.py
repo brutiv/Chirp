@@ -20,10 +20,8 @@ class Infractions(Extension):
 		super().__init__()
 
 	@listen()
-	async def on_ready(self):
-		if not getattr(self.bot, "ready_once", False):
-			self.bot.ready_once = True
-			await self.schedule_all_expirations()
+	async def on_startup(self):
+		await self.schedule_all_expirations()
 
 	async def schedule_all_expirations(self):
 		now = datetime.utcnow()
@@ -98,7 +96,7 @@ class Infractions(Extension):
 			new_embed = original_embed.to_dict()
 
 			if 'title' in new_embed and new_embed['title']:
-				new_embed['title'] = f"{new_embed['title']} (Expired)"
+				if "(Expired)" not in new_embed['title']: new_embed['title'] = f"{new_embed['title']} (Expired)"
 			
 			if 'description' in new_embed:
 				new_embed['description'] = re.sub(r'\n> \*\*Expires:\*\* .*', '', new_embed['description'])
