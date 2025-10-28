@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from logging.handlers import RotatingFileHandler
 
 from api import context
-from uvicorn import start_uvicorn
+from Utils.uvicorn import start_uvicorn
 
 load_dotenv()
 
