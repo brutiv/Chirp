@@ -2,6 +2,7 @@ import os
 import logging
 import signal
 import asyncio
+import uvicorn
 
 from interactions import Client, Intents, listen, Activity, ActivityType, Task, IntervalTrigger
 from interactions.ext import prefixed_commands
@@ -11,6 +12,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from dotenv import load_dotenv
 from logging.handlers import RotatingFileHandler
+
+from api import context
 
 load_dotenv()
 
@@ -27,6 +30,7 @@ prefixed_commands.setup(bot)
 bot.mem_cache = Cache(Cache.MEMORY)
 bot.db_client = AsyncIOMotorClient(os.environ.get("MONGODB_URI"))
 bot.db = bot.db_client["Chirp"]
+context.bot = bot
 bot.ready = False
 
 @listen()
@@ -64,6 +68,17 @@ async def update_servers_activity_task():
     await bot.change_presence(activity=Activity(type=ActivityType.PLAYING, name=f"Chirp | /help | {guild_count} servers"))
     cls_log.info(f"Updated activity to {guild_count} servers.")
 
+bot.load_extension("Extensions.developer.commands")
+bot.load_extension("Extensions.core.commands")
+bot.load_extension("Extensions.config.config")
+bot.load_extension("Extensions.staff-management.promotions")
+bot.load_extension("Extensions.staff-management.infractions")
+
+async def start_uvicorn():
+    config = uvicorn.Config(app="api.bot_api:app", host="0.0.0.0", port=6248, loop="asyncio", lifespan="on") # 45.139.50.11:6248
+    server = uvicorn.Server(config)
+    await server.serve()
+
 def shutdown():
     cls_log.info("Shutting down...")
     bot.db_client.close()
@@ -72,9 +87,13 @@ def shutdown():
 signal.signal(signal.SIGINT, lambda s,f: shutdown())
 signal.signal(signal.SIGTERM, lambda s,f: shutdown())
 
-bot.load_extension("Extensions.developer.commands")
-bot.load_extension("Extensions.core.commands")
-bot.load_extension("Extensions.config.config")
-bot.load_extension("Extensions.staff-management.promotions")
-bot.load_extension("Extensions.staff-management.infractions")
-bot.start(os.environ.get("DISCORD_TOKEN"))
+async def main():
+    uvicorn_task = asyncio.create_task(start_uvicorn())
+    bot_task = asyncio.create_task(bot.astart(os.environ.get("DISCORD_TOKEN")))
+    done, pending = await asyncio.wait({uvicorn_task, bot_task}, return_when=asyncio.FIRST_COMPLETED)
+    for p in pending:
+        p.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
