@@ -4,8 +4,9 @@ import hashlib
 import time
 import logging
 from typing import Optional, List, Any, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Header, HTTPException, Depends, status
+from fastapi import Body
 from .context import bot
 
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -92,15 +93,105 @@ def _ts_from_doc(doc: dict) -> Optional[int]:
     return None
 
 
-def _sanitize_item(doc: dict) -> Dict[str, Any]:
+def _member_info(member) -> Optional[Dict[str, str]]:
+    if not member:
+        return None
     try:
-        # Prefer short/code IDs for display
-        preferred = doc.get("short_id") or doc.get("code") or doc.get("id")
+        user = getattr(member, "user", member)
+        display_name = (
+            getattr(member, "display_name", None)
+            or getattr(user, "global_name", None)
+            or getattr(user, "username", None)
+            or getattr(member, "name", None)
+        )
+        username = getattr(user, "username", None) or getattr(user, "name", None)
+        return {"display_name": str(display_name) if display_name else None, "username": str(username) if username else None}
+    except Exception:
+        return None
+
+
+def _resolve_member_info_from_id(guild, uid: Optional[str]) -> Optional[Dict[str, str]]:
+    if not guild or not uid:
+        return None
+    try:
+        gm = getattr(guild, "get_member", None)
+        m = gm(int(uid)) if callable(gm) else None
+        return _member_info(m) if m else None
+    except Exception:
+        return None
+
+
+def _map_infraction(doc: dict, guild=None) -> Dict[str, Any]:
+    _id = (
+        doc.get("infraction_id")
+        or doc.get("id")
+        or doc.get("short_id")
+        or doc.get("code")
+        or str(doc.get("_id"))
+    )
+    reason = doc.get("reason") or ""
+    by_id = doc.get("issued_by_id")
+    by_info = _resolve_member_info_from_id(guild, by_id)
+    by_name = (by_info and by_info.get("display_name"))
+    target_id = doc.get("member_id") or doc.get("user_id") or doc.get("target_id")
+    target_info = _resolve_member_info_from_id(guild, target_id)
+    target_name = target_info and target_info.get("display_name")
+    created_at = _ts_from_doc(doc)
+    return {
+        "id": str(_id) if _id is not None else None,
+        "reason": reason,
+        "by": by_name,
+        "by_id": by_id,
+        "by_username": (by_info and by_info.get("username")) or None,
+        "target_id": target_id,
+        "target": target_name,
+        "target_username": (target_info and target_info.get("username")) or None,
+        "created_at": created_at,
+    }
+
+
+def _map_promotion(doc: dict, guild=None) -> Dict[str, Any]:
+    _id = (
+        doc.get("promotion_id")
+        or doc.get("id")
+        or doc.get("short_id")
+        or doc.get("code")
+        or str(doc.get("_id"))
+    )
+    reason = doc.get("reason") or ""
+    by_id = doc.get("issued_by_id")
+    by_info = _resolve_member_info_from_id(guild, by_id)
+    by_name = (by_info and by_info.get("display_name"))
+    target_id = doc.get("member_id") or doc.get("user_id") or doc.get("target_id")
+    target_info = _resolve_member_info_from_id(guild, target_id)
+    target_name = target_info and target_info.get("display_name")
+    created_at = _ts_from_doc(doc)
+    return {
+        "id": str(_id) if _id is not None else None,
+        "reason": reason,
+        "by": by_name,
+        "by_id": by_id,
+        "by_username": (by_info and by_info.get("username")) or None,
+        "target_id": target_id,
+        "target": target_name,
+        "target_username": (target_info and target_info.get("username")) or None,
+        "created_at": created_at,
+    }
+
+
+def _sanitize_item(doc: dict, guild=None) -> Dict[str, Any]:
+    try:
+        preferred = (
+            doc.get("short_id")
+            or doc.get("code")
+            or doc.get("id")
+            or doc.get("infraction_id")
+            or doc.get("promotion_id")
+        )
         _id = str(preferred or doc.get("_id"))
     except Exception:
         _id = None
     reason = doc.get("reason") or doc.get("note") or doc.get("notes") or ""
-    # Attempt to determine moderator/actor identity from several common shapes
     by = (
         doc.get("by")
         or doc.get("actor")
@@ -112,6 +203,7 @@ def _sanitize_item(doc: dict) -> Dict[str, Any]:
     )
     by_name = None
     by_id = None
+    by_username = None
     if isinstance(by, dict):
         by_name = (
             by.get("username")
@@ -121,10 +213,8 @@ def _sanitize_item(doc: dict) -> Dict[str, Any]:
         )
         by_id = by.get("id")
     else:
-        # Sometimes a tag or username string
         if by:
             by_name = str(by)
-    # Alternate flat fields
     by_name = by_name or (
         doc.get("by_username")
         or doc.get("by_name")
@@ -137,6 +227,7 @@ def _sanitize_item(doc: dict) -> Dict[str, Any]:
         or doc.get("author_username")
         or doc.get("executor_tag")
         or doc.get("executor_username")
+        or doc.get("issued_by")
     )
     by_id = by_id or (
         doc.get("by_id")
@@ -144,19 +235,37 @@ def _sanitize_item(doc: dict) -> Dict[str, Any]:
         or doc.get("staff_id")
         or doc.get("author_id")
         or doc.get("executor_id")
+        or doc.get("issued_by_id")
     )
+    if guild is not None and by_id:
+        by_info = _resolve_member_info_from_id(guild, by_id)
+        if by_info:
+            by_name = by_info.get("display_name") or by_name
+            by_username = by_info.get("username")
+
     target = doc.get("target") or {}
     if isinstance(target, dict):
         target_id = target.get("id") or target.get("user_id") or target.get("member_id")
     else:
         target_id = doc.get("target_id") or doc.get("user_id") or doc.get("member_id") or None
+    target_name = None
+    target_username = None
+    if guild is not None and target_id:
+        target_info = _resolve_member_info_from_id(guild, target_id)
+        if target_info:
+            target_name = target_info.get("display_name")
+            target_username = target_info.get("username")
+
     created_at = _ts_from_doc(doc)
     return {
         "id": _id,
         "reason": reason,
         "by": by_name,
         "by_id": by_id,
+        "by_username": by_username,
         "target_id": target_id,
+        "target": target_name,
+        "target_username": target_username,
         "created_at": created_at,
     }
 
@@ -181,7 +290,7 @@ async def list_guilds(verified: bool = Depends(verify_request)):
 
 @app.get("/api/guilds/{guild_id}/config")
 async def get_guild_config(guild_id: int, verified: bool = Depends(verify_request)):
-    _ensure_bot_in_guild(guild_id)
+    guild = _ensure_bot_in_guild(guild_id)
     cache_key = f"config_{guild_id}"
     config = await bot.mem_cache.get(cache_key)
     if not config:
@@ -198,7 +307,7 @@ async def get_guild_config(guild_id: int, verified: bool = Depends(verify_reques
 
 @app.post("/api/guilds/{guild_id}/config")
 async def update_guild_config(guild_id: int, payload: dict, verified: bool = Depends(verify_request)):
-    _ensure_bot_in_guild(guild_id)
+    guild = _ensure_bot_in_guild(guild_id)
     cache_key = f"config_{guild_id}"
     try:
         await bot.mem_cache.delete(cache_key)
@@ -275,7 +384,6 @@ async def health():
     try:
         import resource  # type: ignore
         ru = resource.getrusage(resource.RUSAGE_SELF)
-        # ru_maxrss is kilobytes on Linux, bytes on macOS; best effort normalize to MB
         mem_kb = getattr(ru, "ru_maxrss", 0)
         memory_mb = round((mem_kb / 1024.0), 1) if mem_kb else None
     except Exception:
@@ -340,12 +448,17 @@ async def guild_infractions(
     q: Optional[str] = None,
     verified: bool = Depends(verify_request),
 ):
-    _ensure_bot_in_guild(guild_id)
+    guild = _ensure_bot_in_guild(guild_id)
     guild_id_str = str(guild_id)
     query: Dict[str, Any] = {"guild_id": guild_id_str}
     needle = (q or id)
     if needle:
-        ors: List[Dict[str, Any]] = [{"id": needle}, {"short_id": needle}, {"code": needle}]
+        ors: List[Dict[str, Any]] = [
+            {"id": needle},
+            {"short_id": needle},
+            {"code": needle},
+            {"infraction_id": needle},
+        ]
         if ObjectId is not None and isinstance(needle, str) and len(needle) == 24:
             try:
                 ors.append({"_id": ObjectId(needle)})
@@ -360,10 +473,30 @@ async def guild_infractions(
         total = 0
     try:
         cursor = bot.db.infractions.find(query).sort([("_id", -1)]).limit(max(1, int(limit)))
-        async for doc in cursor:
-            items.append(_sanitize_item(doc))
     except Exception:
-        items = []
+        cursor = None
+    if cursor is not None:
+        async for doc in cursor:
+            try:
+                items.append(_map_infraction(doc, guild=guild))
+            except Exception:
+                try:
+                    items.append(_sanitize_item(doc, guild=guild))
+                except Exception:
+                    continue
+    if not items and total:
+        try:
+            cursor2 = bot.db.infractions.find({"guild_id": guild_id_str}).sort([("timestamp", -1)]).limit(max(1, int(limit)))
+            async for doc in cursor2:
+                try:
+                    items.append(_map_infraction(doc, guild=guild))
+                except Exception:
+                    try:
+                        items.append(_sanitize_item(doc, guild=guild))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
     return {"ok": True, "guild_id": guild_id_str, "total": total, "items": items}
 
 
@@ -375,12 +508,17 @@ async def guild_promotions(
     q: Optional[str] = None,
     verified: bool = Depends(verify_request),
 ):
-    _ensure_bot_in_guild(guild_id)
+    guild = _ensure_bot_in_guild(guild_id)
     guild_id_str = str(guild_id)
     query: Dict[str, Any] = {"guild_id": guild_id_str}
     needle = (q or id)
     if needle:
-        ors: List[Dict[str, Any]] = [{"id": needle}, {"short_id": needle}, {"code": needle}]
+        ors: List[Dict[str, Any]] = [
+            {"id": needle},
+            {"short_id": needle},
+            {"code": needle},
+            {"promotion_id": needle},
+        ]
         if ObjectId is not None and isinstance(needle, str) and len(needle) == 24:
             try:
                 ors.append({"_id": ObjectId(needle)})
@@ -395,8 +533,82 @@ async def guild_promotions(
         total = 0
     try:
         cursor = bot.db.promotions.find(query).sort([("_id", -1)]).limit(max(1, int(limit)))
-        async for doc in cursor:
-            items.append(_sanitize_item(doc))
     except Exception:
-        items = []
+        cursor = None
+    if cursor is not None:
+        async for doc in cursor:
+            try:
+                items.append(_map_promotion(doc, guild=guild))
+            except Exception:
+                try:
+                    items.append(_sanitize_item(doc, guild=guild))
+                except Exception:
+                    continue
     return {"ok": True, "guild_id": guild_id_str, "total": total, "items": items}
+
+
+@app.post("/api/guilds/{guild_id}/infractions/{infraction_id}")
+async def edit_infraction(
+    guild_id: int,
+    infraction_id: str,
+    payload: Dict[str, Any] = Body(...),
+    verified: bool = Depends(verify_request),
+):
+    _ensure_bot_in_guild(guild_id)
+    guild_id_str = str(guild_id)
+    reason = (payload.get("reason") or "").strip()
+    try:
+        await bot.db.infractions.update_one(
+            {"guild_id": guild_id_str, "infraction_id": infraction_id},
+            {"$set": {"reason": reason}},
+        )
+        try:
+            await bot.mem_cache.delete(f"infraction_{infraction_id}")
+        except Exception:
+            pass
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@app.get("/api/guilds/{guild_id}/infractions/series")
+async def guild_infractions_series(
+    guild_id: int,
+    days: int = 30,
+    verified: bool = Depends(verify_request),
+):
+    _ensure_bot_in_guild(guild_id)
+    guild_id_str = str(guild_id)
+    try:
+        d = max(1, min(int(days), 180))
+    except Exception:
+        d = 30
+    now = datetime.utcnow()
+    since = now - timedelta(days=d - 1)
+    try:
+        pipeline = [
+            {"$match": {"guild_id": guild_id_str, "timestamp": {"$exists": True}}},
+            {"$addFields": {"ts": {"$dateFromString": {"dateString": "$timestamp"}}}},
+            {"$match": {"ts": {"$gte": since}}},
+            {
+                "$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$ts"}},
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+        cursor = bot.db.infractions.aggregate(pipeline)
+        raw = []
+        async for doc in cursor:
+            raw.append({"date": doc.get("_id"), "count": int(doc.get("count", 0))})
+    except Exception:
+        raw = []
+    index = {r["date"]: r["count"] for r in raw if r.get("date")}
+    series = []
+    cur = since
+    while cur.date() <= now.date():
+        key = cur.strftime("%Y-%m-%d")
+        series.append({"date": key, "count": int(index.get(key, 0))})
+        cur = cur + timedelta(days=1)
+    return {"ok": True, "guild_id": guild_id_str, "days": d, "series": series}
